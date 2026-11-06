@@ -1,0 +1,16 @@
+node_modules/
+dist/
+release/
+coverage/
+artifacts/
+test-results/
+playwright-report/
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+__pycache__/
+*.py[cod]
+.env
+.env.*
+samples/*.pdf

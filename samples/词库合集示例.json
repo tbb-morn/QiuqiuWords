@@ -1,0 +1,187 @@
+{
+  "app": "qiuqiu-words",
+  "version": 2,
+  "kind": "library-bundle",
+  "exportedAt": "2026-11-06T14:20:00.000Z",
+  "libraries": [
+    {
+      "name": "考研核心词",
+      "description": "考研阅读里反复出现的高频词",
+      "tags": ["考研", "阅读"],
+      "words": [
+        {
+          "word": "abandon",
+          "phonetic": "/əˈbændən/",
+          "definitions": [
+            {
+              "partOfSpeech": "v.",
+              "meaning": "放弃；抛弃；离弃"
+            },
+            {
+              "partOfSpeech": "n.",
+              "meaning": "放纵；放任"
+            }
+          ],
+          "examples": [
+            {
+              "en": "They had to abandon the plan because of the storm.",
+              "zh": "因为暴风雨，他们不得不放弃这个计划。"
+            }
+          ],
+          "phrases": [
+            {
+              "en": "abandon oneself to",
+              "zh": "沉溺于；纵情于"
+            }
+          ],
+          "mnemonic": "a + band + on：一个乐队在台上，把烦恼都抛弃了",
+          "derivatives": ["abandonment", "abandoned"],
+          "synonyms": ["desert", "forsake"],
+          "antonyms": ["keep", "retain"],
+          "note": "在阅读里常表示“放弃某个计划、观点或做法”。",
+          "customFields": [
+            {
+              "label": "来源",
+              "value": "考研阅读真题"
+            }
+          ]
+        },
+        {
+          "word": "resilient",
+          "phonetic": "/rɪˈzɪliənt/",
+          "definitions": [
+            {
+              "partOfSpeech": "adj.",
+              "meaning": "有韧性的；能迅速恢复的；适应力强的"
+            }
+          ],
+          "examples": [
+            {
+              "en": "Children are often more resilient than adults expect.",
+              "zh": "孩子的恢复力往往比大人想象的更强。"
+            }
+          ],
+          "phrases": [
+            {
+              "en": "resilient economy",
+              "zh": "有韧性的经济"
+            }
+          ],
+          "mnemonic": "re（重新）+ sil（跳）+ ient：摔倒后重新跳起来",
+          "derivatives": ["resilience", "resiliently"],
+          "synonyms": ["tough", "adaptable"],
+          "antonyms": ["fragile", "vulnerable"],
+          "note": "写作里可以用来形容人、经济、系统。",
+          "customFields": []
+        }
+      ]
+    },
+    {
+      "name": "雅思口语小词",
+      "description": "口语 Part 2 和 Part 3 可以顺手用上的词",
+      "tags": ["雅思", "口语"],
+      "words": [
+        {
+          "word": "serendipity",
+          "phonetic": "/ˌserənˈdɪpəti/",
+          "definitions": [
+            {
+              "partOfSpeech": "n.",
+              "meaning": "意外发现珍奇事物的本领；机缘巧合"
+            }
+          ],
+          "examples": [
+            {
+              "en": "Meeting her was pure serendipity.",
+              "zh": "遇见她纯粹是机缘巧合。"
+            }
+          ],
+          "phrases": [
+            {
+              "en": "by serendipity",
+              "zh": "机缘巧合地"
+            }
+          ],
+          "mnemonic": "seren（平静）+ dipity：像平静海面突然漂来一份礼物",
+          "derivatives": ["serendipitous"],
+          "synonyms": ["chance", "luck"],
+          "antonyms": ["misfortune"],
+          "note": "口语里可以用来讲一个意外遇见的人或机会。",
+          "customFields": [
+            {
+              "label": "场景",
+              "value": "Part 2 描述一次意外经历"
+            }
+          ]
+        },
+        {
+          "word": "cozy",
+          "phonetic": "/ˈkəʊzi/",
+          "definitions": [
+            {
+              "partOfSpeech": "adj.",
+              "meaning": "温暖舒适的；亲切的"
+            }
+          ],
+          "examples": [
+            {
+              "en": "This little café feels really cozy.",
+              "zh": "这家小咖啡馆让人感觉很温暖舒适。"
+            }
+          ],
+          "phrases": [
+            {
+              "en": "a cozy corner",
+              "zh": "一个温馨的角落"
+            }
+          ],
+          "mnemonic": "想象一只猫蜷在毛毯里",
+          "derivatives": ["coziness"],
+          "synonyms": ["snug", "comfortable"],
+          "antonyms": ["cold", "uncomfortable"],
+          "note": "描述房间、咖啡馆、氛围都很自然。",
+          "customFields": []
+        }
+      ]
+    },
+    {
+      "name": "日常通勤词",
+      "description": "上下班路上顺手记几个",
+      "tags": ["日常", "通勤"],
+      "words": [
+        {
+          "word": "commute",
+          "phonetic": "/kəˈmjuːt/",
+          "definitions": [
+            {
+              "partOfSpeech": "v.",
+              "meaning": "通勤；上下班往返"
+            },
+            {
+              "partOfSpeech": "n.",
+              "meaning": "通勤路程"
+            }
+          ],
+          "examples": [
+            {
+              "en": "She commutes to work by subway every day.",
+              "zh": "她每天坐地铁通勤。"
+            }
+          ],
+          "phrases": [
+            {
+              "en": "a long commute",
+              "zh": "漫长的通勤"
+            }
+          ],
+          "mnemonic": "com（一起）+ mute（改变）：每天和大家一起在公司和家之间切换",
+          "derivatives": ["commuter", "commuting"],
+          "synonyms": ["travel"],
+          "antonyms": [],
+          "note": "",
+          "customFields": []
+        }
+      ]
+    }
+  ]
+}
