@@ -516,6 +516,10 @@
     grid-template-columns: repeat(2, 1fr);
   }
 
+  .import-conflict__options {
+    grid-template-columns: 1fr;
+  }
+
   .dropzone {
     min-height: 190px;
   }

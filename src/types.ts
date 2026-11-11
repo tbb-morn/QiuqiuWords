@@ -188,9 +188,12 @@ export interface ImportedLibraryResult {
   wordCount: number;
 }
 
+export type LibraryBundleConflictMode = 'rename' | 'overwrite';
+
 export interface LibraryBundleImportSummary {
   libraries: ImportedLibraryResult[];
   totalWords: number;
   renamedCount: number;
+  overwrittenCount: number;
 }
 

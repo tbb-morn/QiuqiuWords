@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+} from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import {
   BookHeart,
   Check,
@@ -10,12 +18,21 @@ import {
   TriangleAlert,
   UploadCloud,
 } from 'lucide-react';
-import type { LibraryBundleImportSummary, LibraryBundlePreview } from '../types';
-import { importLibraryBundle } from '../db/repositories';
+import type {
+  LibraryBundleConflictMode,
+  LibraryBundleImportSummary,
+  LibraryBundlePreview,
+  LibraryWithCounts,
+} from '../types';
+import { getLibrariesWithCounts, importLibraryBundle } from '../db/repositories';
 import { errorMessage } from '../lib/errors';
 import { parseLibraryBundle } from '../lib/transfer';
 import { Modal } from './Modal';
 import { useToast } from './ToastProvider';
+
+function libraryNameKey(name: string): string {
+  return name.trim().slice(0, 40).toLocaleLowerCase('zh-CN');
+}
 
 interface ImportLibrariesDialogProps {
   open: boolean;
@@ -29,8 +46,11 @@ export function ImportLibrariesDialog({
   onImported,
 }: ImportLibrariesDialogProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const libraries = useLiveQuery(getLibrariesWithCounts, [], undefined);
   const { toast } = useToast();
   const [preview, setPreview] = useState<LibraryBundlePreview | null>(null);
+  const [conflictMode, setConflictMode] =
+    useState<LibraryBundleConflictMode>('rename');
   const [error, setError] = useState('');
   const [reading, setReading] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -39,16 +59,35 @@ export function ImportLibrariesDialog({
   useEffect(() => {
     if (!open) return;
     setPreview(null);
+    setConflictMode('rename');
     setError('');
     setReading(false);
     setImporting(false);
     setIsDragging(false);
   }, [open]);
 
+  const conflictingLibraries = useMemo(() => {
+    if (!preview || !libraries) return [] as LibraryWithCounts[];
+    const existingByName = new Map(
+      libraries.map((library) => [libraryNameKey(library.name), library]),
+    );
+    const found = new Map<string, LibraryWithCounts>();
+    for (const item of preview.libraries) {
+      const library = existingByName.get(libraryNameKey(item.name));
+      if (library) found.set(library.id, library);
+    }
+    return [...found.values()];
+  }, [libraries, preview]);
+
+  const blockedConflict = conflictingLibraries.find(
+    (library) => Boolean(library.activeSession),
+  );
+
   const handleFile = async (file: File) => {
     setError('');
     setReading(true);
     setPreview(null);
+    setConflictMode('rename');
     try {
       if (!file.name.toLocaleLowerCase('en-US').endsWith('.json')) {
         throw new Error('请选择由「导出全部」生成的 .json 词库合集文件');
@@ -85,11 +124,20 @@ export function ImportLibrariesDialog({
     setImporting(true);
     setError('');
     try {
-      const summary = await importLibraryBundle(preview.libraries);
+      const summary = await importLibraryBundle(preview.libraries, {
+        onConflict: conflictMode,
+      });
+      const details: string[] = [];
+      if (summary.overwrittenCount > 0) {
+        details.push(`覆盖 ${summary.overwrittenCount} 个同名词库`);
+      }
+      if (summary.renamedCount > 0) {
+        details.push(`${summary.renamedCount} 个重名词库已自动改名`);
+      }
       toast(
-        summary.renamedCount > 0
-          ? `已导入 ${summary.libraries.length} 个词库、${summary.totalWords} 个单词；重名词库已自动改名`
-          : `已导入 ${summary.libraries.length} 个词库、${summary.totalWords} 个单词`,
+        `已导入 ${summary.libraries.length} 个词库、${summary.totalWords} 个单词${
+          details.length > 0 ? `；${details.join('，')}` : ''
+        }`,
       );
       onImported(summary);
     } catch (caught) {
@@ -104,7 +152,7 @@ export function ImportLibrariesDialog({
       onClose={importing ? () => undefined : onClose}
       title="导入 JSON 词库合集"
       eyebrow="LIBRARY PACK"
-      description="JSON 只负责批量导入词库，可一次导入一个或多个词库；CSV 请进词库后添加单词。同名词库不会覆盖现有内容。"
+      description="JSON 只负责批量导入词库，可一次导入一个或多个词库；CSV 请进词库后添加单词。遇到同名词库时可以选择保留改名或覆盖。"
       size="lg"
       hideClose={importing}
       closeOnBackdrop={!importing}
@@ -128,7 +176,11 @@ export function ImportLibrariesDialog({
               '正在整理词库…'
             ) : preview ? (
               <>
-                <Check size={16} /> 导入 {preview.libraries.length} 个词库
+                <Check size={16} />{' '}
+                {conflictMode === 'overwrite' && conflictingLibraries.length > 0
+                  ? '覆盖导入'
+                  : '导入'}{' '}
+                {preview.libraries.length} 个词库
               </>
             ) : (
               '先选择词库合集'
@@ -226,22 +278,84 @@ export function ImportLibrariesDialog({
               </div>
             </div>
 
+            {conflictingLibraries.length > 0 && (
+              <div className="import-conflict">
+                <div className="import-conflict__title">
+                  <TriangleAlert size={15} />
+                  <span>发现 {conflictingLibraries.length} 个同名词库</span>
+                </div>
+                <p className="import-conflict__intro">
+                  这些词库已经存在，请选择这次导入要怎么处理。
+                </p>
+                <div
+                  className="import-conflict__options"
+                  role="group"
+                  aria-label="同名词库处理方式"
+                >
+                  <button
+                    type="button"
+                    className={`import-conflict__option ${
+                      conflictMode === 'rename' ? 'is-active' : ''
+                    }`}
+                    aria-pressed={conflictMode === 'rename'}
+                    onClick={() => setConflictMode('rename')}
+                    disabled={importing}
+                  >
+                    <strong>保留原词库</strong>
+                    <small>新词库自动改名为「（导入）」，原词库不动。</small>
+                  </button>
+                  <button
+                    type="button"
+                    className={`import-conflict__option ${
+                      conflictMode === 'overwrite' ? 'is-active' : ''
+                    }`}
+                    aria-pressed={conflictMode === 'overwrite'}
+                    onClick={() => setConflictMode('overwrite')}
+                    disabled={importing || Boolean(blockedConflict)}
+                  >
+                    <strong>覆盖同名词库</strong>
+                    <small>更新描述、标签和单词；同名单词保留学习状态。</small>
+                  </button>
+                </div>
+                {blockedConflict && (
+                  <p className="import-conflict__warning">
+                    「{blockedConflict.name}」还有进行中的学习，暂时不能覆盖。请先完成或放弃学习，或选择保留改名。
+                  </p>
+                )}
+                {conflictMode === 'overwrite' && !blockedConflict && (
+                  <p className="import-conflict__warning">
+                    覆盖会删除原词库中不再出现在文件里的单词及其学习状态；同名单词会保留学习状态。
+                  </p>
+                )}
+              </div>
+            )}
+
             {preview.libraries.length > 0 && (
               <div className="bundle-library-list">
-                {preview.libraries.map((library, index) => (
-                  <div className="bundle-library-row" key={`${library.name}-${index}`}>
-                    <span className="bundle-library-row__icon">
-                      <BookHeart size={17} />
-                    </span>
-                    <div className="bundle-library-row__main">
-                      <strong>{library.name}</strong>
-                      <span>{library.description || '没有写描述'}</span>
+                {preview.libraries.map((library, index) => {
+                  const sameName = conflictingLibraries.some(
+                    (item) => libraryNameKey(item.name) === libraryNameKey(library.name),
+                  );
+                  return (
+                    <div className="bundle-library-row" key={`${library.name}-${index}`}>
+                      <span className="bundle-library-row__icon">
+                        <BookHeart size={17} />
+                      </span>
+                      <div className="bundle-library-row__main">
+                        <strong>
+                          {library.name}
+                          {sameName && (
+                            <span className="mini-badge mini-badge--butter">同名</span>
+                          )}
+                        </strong>
+                        <span>{library.description || '没有写描述'}</span>
+                      </div>
+                      <span className="bundle-library-row__count">
+                        <Layers3 size={13} /> {library.words.length} 个词
+                      </span>
                     </div>
-                    <span className="bundle-library-row__count">
-                      <Layers3 size={13} /> {library.words.length} 个词
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -259,7 +373,11 @@ export function ImportLibrariesDialog({
             <div className="soft-note">
               <Sparkles size={16} />
               <span>
-                如果已有同名词库，新词库会自动命名为「词库名（导入）」，不会覆盖原有词库。
+                {conflictingLibraries.length === 0
+                  ? '没有同名词库，这次会直接添加为新词库。'
+                  : conflictMode === 'overwrite'
+                    ? '覆盖只影响同名词库的内容；学习历史会保留，但被删除的单词不再出现在统计单词列表里。'
+                    : '同名词库会保留，新词库自动改名为「词库名（导入）」。'}
               </span>
             </div>
           </div>

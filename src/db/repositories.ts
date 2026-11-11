@@ -3,6 +3,7 @@ import type {
   DuplicateStrategy,
   ImportSummary,
   Library,
+  LibraryBundleConflictMode,
   LibraryBundleImportSummary,
   LibraryBundleItem,
   LibraryWithCounts,
@@ -369,98 +370,237 @@ export async function importWords(
 /*                            多词库合集导入                                    */
 /* -------------------------------------------------------------------------- */
 
+function libraryNameKey(name: string): string {
+  return name.trim().slice(0, 40).toLocaleLowerCase('zh-CN');
+}
+
 function uniqueImportedLibraryName(baseName: string, usedNames: Set<string>): string {
   const base = (baseName.trim() || '导入词库').slice(0, 40);
   let candidate = base;
   let counter = 1;
-  while (usedNames.has(candidate.toLocaleLowerCase('zh-CN'))) {
+  while (usedNames.has(libraryNameKey(candidate))) {
     const suffix = counter === 1 ? '（导入）' : `（导入 ${counter}）`;
     candidate = `${base.slice(0, Math.max(0, 40 - suffix.length)).trimEnd()}${suffix}`;
     counter += 1;
   }
-  usedNames.add(candidate.toLocaleLowerCase('zh-CN'));
+  usedNames.add(libraryNameKey(candidate));
   return candidate;
+}
+
+export interface ImportLibraryBundleOptions {
+  /** 同名词库：默认保留并改名，也可以覆盖原词库。 */
+  onConflict?: LibraryBundleConflictMode;
 }
 
 /**
  * 一次性把多个词库作为新词库导入。
- * - 同名词库不会覆盖已有内容，会自动添加（导入）后缀；
- * - 单词内容会重新生成 ID，不含学习进度与历史；
+ * - 默认同名词库保留并添加（导入）后缀；
+ * - 选择 overwrite 时，同名词库会更新描述、标签和单词；
+ * - 覆盖时同名单词保留学习状态，文件里没有的旧单词及其状态会删除；
+ * - 设置有进行中学习的同名词库不能被覆盖；
  * - 全部写入在同一个事务里，失败时不会留下半套词库。
  */
 export async function importLibraryBundle(
   inputLibraries: LibraryBundleItem[],
+  options: ImportLibraryBundleOptions = {},
 ): Promise<LibraryBundleImportSummary> {
   if (inputLibraries.length === 0) {
     throw new AppError('这个合集里没有可导入的词库', 'bundle_empty');
   }
 
-  return db.transaction('rw', db.libraries, db.words, db.progress, async () => {
-    const existingLibraries = await db.libraries.toArray();
-    const usedNames = new Set(
-      existingLibraries.map((library) => library.name.toLocaleLowerCase('zh-CN')),
-    );
-    const imported: LibraryBundleImportSummary['libraries'] = [];
-    let totalWords = 0;
-    let renamedCount = 0;
-    const timestamp = now();
+  const onConflict = options.onConflict ?? 'rename';
 
-    for (const source of inputLibraries) {
-      const originalName = source.name.trim().slice(0, 40) || '导入词库';
-      const cleanedName = uniqueImportedLibraryName(originalName, usedNames);
-      const description = source.description.trim().slice(0, 300);
-      const tags = sanitizeLibraryTags(source.tags);
-
-      const words: WordContent[] = [];
-      for (const rawWord of source.words) {
-        const content = normalizeWordContent(rawWord);
-        if (validateWordContent(content)) continue;
-        // 合集导入保留原始重复单词，不在这里静默去重。
-        words.push(content);
-      }
-      if (words.length === 0) continue;
-
-      const libraryId = createId();
-      const library: Library = {
-        id: libraryId,
-        name: cleanedName,
-        description,
-        tags,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-      const wordRecords: Word[] = words.map((content) =>
-        newWordRecord(libraryId, content),
+  return db.transaction(
+    'rw',
+    db.libraries,
+    db.words,
+    db.progress,
+    db.sessions,
+    async () => {
+      const [existingLibraries, activeSessions] = await Promise.all([
+        db.libraries.toArray(),
+        db.sessions.where('status').equals('in_progress').toArray(),
+      ]);
+      const existingByName = new Map(
+        existingLibraries.map((library) => [libraryNameKey(library.name), library]),
       );
-      const progressRecords: WordProgress[] = wordRecords.map((word) => ({
-        id: progressId(libraryId, word.id),
-        libraryId,
-        wordId: word.id,
-        status: 'unseen',
-        mastered: false,
-        updatedAt: timestamp,
-      }));
+      const activeLibraryIds = new Set(
+        activeSessions.map((session) => session.libraryId),
+      );
+      const touchedLibraryIds = new Set<string>();
+      const usedNames = new Set(
+        existingLibraries.map((library) => libraryNameKey(library.name)),
+      );
+      const imported: LibraryBundleImportSummary['libraries'] = [];
+      let totalWords = 0;
+      let renamedCount = 0;
+      let overwrittenCount = 0;
+      const timestamp = now();
 
-      await db.libraries.add(library);
-      await db.words.bulkAdd(wordRecords);
-      await db.progress.bulkAdd(progressRecords);
+      for (const source of inputLibraries) {
+        const originalName = source.name.trim().slice(0, 40) || '导入词库';
+        const description = source.description.trim().slice(0, 300);
+        const tags = sanitizeLibraryTags(source.tags);
 
-      totalWords += wordRecords.length;
-      if (cleanedName !== originalName) renamedCount += 1;
-      imported.push({
-        id: libraryId,
-        originalName,
-        name: cleanedName,
-        wordCount: wordRecords.length,
-      });
-    }
+        const words: WordContent[] = [];
+        for (const rawWord of source.words) {
+          const content = normalizeWordContent(rawWord);
+          if (validateWordContent(content)) continue;
+          // 合集导入保留原始重复单词，不在这里静默去重。
+          words.push(content);
+        }
+        if (words.length === 0) continue;
 
-    if (imported.length === 0) {
-      throw new AppError('这个合集里没有包含有效单词的词库', 'bundle_empty');
-    }
+        const matchedLibrary =
+          onConflict === 'overwrite'
+            ? existingByName.get(libraryNameKey(originalName))
+            : undefined;
+        const overwrite =
+          Boolean(matchedLibrary) && !touchedLibraryIds.has(matchedLibrary!.id);
 
-    return { libraries: imported, totalWords, renamedCount };
-  });
+        if (overwrite && activeLibraryIds.has(matchedLibrary!.id)) {
+          throw new AppError(
+            `「${matchedLibrary!.name}」还有进行中的学习，不能覆盖。请先完成或放弃学习，或选择「保留原词库并改名」。`,
+            'library_in_active_session',
+          );
+        }
+
+        if (overwrite && matchedLibrary) {
+          const libraryId = matchedLibrary.id;
+          const oldWords = await db.words
+            .where('libraryId')
+            .equals(libraryId)
+            .toArray();
+          const oldProgress = await db.progress
+            .where('libraryId')
+            .equals(libraryId)
+            .toArray();
+          const progressByWordId = new Map(
+            oldProgress.map((item) => [item.wordId, item]),
+          );
+          const oldWordsByKey = new Map<string, Word[]>();
+          for (const word of oldWords) {
+            const list = oldWordsByKey.get(word.wordKey) ?? [];
+            list.push(word);
+            oldWordsByKey.set(word.wordKey, list);
+          }
+
+          const usedOldWordIds = new Set<string>();
+          const wordRecords: Word[] = [];
+          const newProgress: WordProgress[] = [];
+
+          for (const content of words) {
+            const wordKey = normalizeWordKey(content.word);
+            const matchedWord = (oldWordsByKey.get(wordKey) ?? []).find(
+              (word) => !usedOldWordIds.has(word.id),
+            );
+            if (matchedWord) {
+              usedOldWordIds.add(matchedWord.id);
+              wordRecords.push({
+                ...matchedWord,
+                ...content,
+                wordKey,
+                updatedAt: timestamp,
+              });
+              if (!progressByWordId.has(matchedWord.id)) {
+                newProgress.push({
+                  id: progressId(libraryId, matchedWord.id),
+                  libraryId,
+                  wordId: matchedWord.id,
+                  status: 'unseen',
+                  mastered: false,
+                  updatedAt: timestamp,
+                });
+              }
+            } else {
+              const record = newWordRecord(libraryId, content);
+              wordRecords.push(record);
+              newProgress.push({
+                id: progressId(libraryId, record.id),
+                libraryId,
+                wordId: record.id,
+                status: 'unseen',
+                mastered: false,
+                updatedAt: timestamp,
+              });
+            }
+          }
+
+          await db.libraries.put({
+            ...matchedLibrary,
+            description,
+            tags,
+            updatedAt: timestamp,
+          });
+          await db.words.bulkPut(wordRecords);
+          if (newProgress.length > 0) await db.progress.bulkAdd(newProgress);
+
+          const removedWords = oldWords.filter(
+            (word) => !usedOldWordIds.has(word.id),
+          );
+          if (removedWords.length > 0) {
+            const removedWordIds = removedWords.map((word) => word.id);
+            await db.words.bulkDelete(removedWordIds);
+            await db.progress.where('wordId').anyOf(removedWordIds).delete();
+          }
+
+          totalWords += wordRecords.length;
+          overwrittenCount += 1;
+          touchedLibraryIds.add(libraryId);
+          imported.push({
+            id: libraryId,
+            originalName,
+            name: matchedLibrary.name,
+            wordCount: wordRecords.length,
+          });
+          continue;
+        }
+
+        const cleanedName = uniqueImportedLibraryName(originalName, usedNames);
+        const libraryId = createId();
+        const library: Library = {
+          id: libraryId,
+          name: cleanedName,
+          description,
+          tags,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        const wordRecords: Word[] = words.map((content) =>
+          newWordRecord(libraryId, content),
+        );
+        const progressRecords: WordProgress[] = wordRecords.map((word) => ({
+          id: progressId(libraryId, word.id),
+          libraryId,
+          wordId: word.id,
+          status: 'unseen',
+          mastered: false,
+          updatedAt: timestamp,
+        }));
+
+        await db.libraries.add(library);
+        await db.words.bulkAdd(wordRecords);
+        await db.progress.bulkAdd(progressRecords);
+
+        existingByName.set(libraryNameKey(cleanedName), library);
+        touchedLibraryIds.add(libraryId);
+        totalWords += wordRecords.length;
+        if (cleanedName !== originalName) renamedCount += 1;
+        imported.push({
+          id: libraryId,
+          originalName,
+          name: cleanedName,
+          wordCount: wordRecords.length,
+        });
+      }
+
+      if (imported.length === 0) {
+        throw new AppError('这个合集里没有包含有效单词的词库', 'bundle_empty');
+      }
+
+      return { libraries: imported, totalWords, renamedCount, overwrittenCount };
+    },
+  );
 }
 
 export interface StartSessionResult {

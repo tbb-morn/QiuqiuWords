@@ -1,7 +1,7 @@
 {
   "name": "qiuqiu-words",
   "private": true,
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "丘丘背单词 · 本地离线的自定义词库英语单词学习工具",
   "type": "module",
   "engines": {

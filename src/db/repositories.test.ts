@@ -308,6 +308,79 @@ describe('多词库合集导入', () => {
     expect(await db.words.count()).toBe(2);
   });
 
+  it('同名词库选择覆盖时更新内容，并保留同名单词的学习状态', async () => {
+    const first = await importLibraryBundle([
+      {
+        name: '可覆盖词库',
+        description: '旧描述',
+        tags: ['旧标签'],
+        words: [content('alpha'), content('beta')],
+      },
+    ]);
+    const libraryId = first.libraries[0].id;
+    const oldWords = await getWordsWithProgress(libraryId);
+    const oldAlpha = oldWords.find((word) => word.word === 'alpha');
+    const oldBeta = oldWords.find((word) => word.word === 'beta');
+    if (!oldAlpha || !oldBeta) throw new Error('测试词库创建失败');
+    await setWordMastered(oldAlpha.id, true);
+
+    const second = await importLibraryBundle(
+      [
+        {
+          name: '可覆盖词库',
+          description: '新描述',
+          tags: ['新标签'],
+          words: [content('alpha'), content('gamma')],
+        },
+      ],
+      { onConflict: 'overwrite' },
+    );
+
+    expect(second.renamedCount).toBe(0);
+    expect(second.overwrittenCount).toBe(1);
+    expect(second.libraries[0]).toMatchObject({
+      id: libraryId,
+      name: '可覆盖词库',
+      wordCount: 2,
+    });
+    expect(await db.libraries.count()).toBe(1);
+    expect(await db.libraries.get(libraryId)).toMatchObject({
+      description: '新描述',
+      tags: ['新标签'],
+    });
+
+    const words = await getWordsWithProgress(libraryId);
+    expect(words.map((word) => word.word).sort()).toEqual(['alpha', 'gamma']);
+    expect(words.find((word) => word.word === 'alpha')?.progress.mastered).toBe(true);
+    expect(words.find((word) => word.word === 'gamma')?.progress).toMatchObject({
+      status: 'unseen',
+      mastered: false,
+    });
+    expect(await db.words.get(oldBeta.id)).toBeUndefined();
+    expect(await db.progress.where('wordId').equals(oldBeta.id).count()).toBe(0);
+  });
+
+  it('有进行中学习的同名词库不能覆盖', async () => {
+    const { library } = await seedLibrary('学习中的词库');
+    await startSession(library.id);
+
+    await expect(
+      importLibraryBundle(
+        [
+          {
+            name: '学习中的词库',
+            description: '新描述',
+            words: [content('alpha')],
+          },
+        ],
+        { onConflict: 'overwrite' },
+      ),
+    ).rejects.toThrow('不能覆盖');
+
+    expect(await db.libraries.count()).toBe(1);
+    expect((await db.libraries.get(library.id))?.description).toBe('用于测试');
+  });
+
   it('空合集或没有有效单词的合集会被拒绝', async () => {
     await expect(importLibraryBundle([])).rejects.toThrow('没有可导入');
     await expect(
